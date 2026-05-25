@@ -218,6 +218,7 @@
   const touchWatchers = [];
   const followers = [];
   const interactions = [];
+  const screenTextWatchers = [];
   let touchTickerStarted = false;
   let currentPrint = (line) => console.log(line);
 
@@ -566,12 +567,14 @@
       const posMatch = /^(\d+)'(\d+)'px$/.exec(unquote(stmt.pos));
       if (!posMatch) { print('screen text: position must look like "200\'450\'px", got ' + stmt.pos); return; }
       let textValue;
+      let watchVar = null;
       const quoted = /^"(.*)"$/.exec(stmt.content);
       if (quoted) {
         textValue = quoted[1];
       } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(stmt.content)) {
         if (!(stmt.content in variables)) { print("screen text: variable " + stmt.content + " is not defined"); return; }
         textValue = String(variables[stmt.content] ?? "");
+        watchVar = stmt.content;
       } else {
         textValue = stmt.content;
       }
@@ -582,6 +585,10 @@
       el.style.top = posMatch[2] + "px";
       el.textContent = textValue;
       stage.appendChild(el);
+      if (watchVar) {
+        screenTextWatchers.push({ variable: watchVar, label: el });
+        startTouchTicker();
+      }
       return;
     }
     if (stmt.kind === "coordinates_show") {
@@ -664,6 +671,7 @@
     touchWatchers.length = 0;
     followers.length = 0;
     interactions.length = 0;
+    screenTextWatchers.length = 0;
     stage.innerHTML = "";
     stage.appendChild(pulseOverlay);
     stage.appendChild(exitFullscreenBtn);
@@ -707,6 +715,10 @@
         if (!target) continue;
         it.label.style.left = (target._x + target.offsetWidth / 2) + "px";
         it.label.style.top = (target._y - 26) + "px";
+      }
+      for (const sw of screenTextWatchers) {
+        const value = String(variables[sw.variable] ?? "");
+        if (sw.label.textContent !== value) sw.label.textContent = value;
       }
     }, 30);
   }
