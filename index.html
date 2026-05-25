@@ -140,6 +140,7 @@
   const keyHandlers = {};
   const activeKeyIntervals = {};
   const sprites = {};
+  const buttons = {};
   let currentPrint = (line) => console.log(line);
 
   const helpExtras = {
@@ -147,6 +148,7 @@
     show: "shows a sprite, e.g. show (bob)",
     hide: "hides a sprite, e.g. hide (bob)",
     move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held",
+    teleport: "teleports a sprite or button: teleport (bob) to (100'200'px) or teleport (bob) to random",
     "<key> pressed": "runs a statement when a key is pressed, e.g. d pressed move (bob) 5px down",
   };
 
@@ -225,6 +227,7 @@
           const handler = pressedHandlers[code];
           if (handler) execute(handler, currentPrint);
         };
+        buttons[code] = btn;
         stage.appendChild(btn);
       },
     },
@@ -273,6 +276,11 @@
     const moveMatch = /^move\s+\(([^)]*)\)\s+(\d+)px\s+(up|down|left|right)(\s+repeat until hold\s*=\s*false)?$/.exec(line);
     if (moveMatch) {
       return { kind: "move", name: moveMatch[1], px: Number(moveMatch[2]), dir: moveMatch[3], repeatUntilHold: !!moveMatch[4] };
+    }
+    const teleportMatch = /^teleport\s+\(([^)]*)\)\s+to\s+(?:\((\d+)'(\d+)'px\)|(random))$/.exec(line);
+    if (teleportMatch) {
+      if (teleportMatch[4]) return { kind: "teleport", name: teleportMatch[1], random: true };
+      return { kind: "teleport", name: teleportMatch[1], x: Number(teleportMatch[2]), y: Number(teleportMatch[3]) };
     }
     const keyPressedMatch = /^([a-zA-Z])\s+pressed\s+(.+)$/.exec(line);
     if (keyPressedMatch) {
@@ -378,6 +386,24 @@
       keyHandlers[stmt.key] = stmt.body;
       return;
     }
+    if (stmt.kind === "teleport") {
+      const el = sprites[stmt.name] ?? buttons[stmt.name];
+      if (!el) { print("teleport: no sprite or button named " + stmt.name); return; }
+      let x, y;
+      if (stmt.random) {
+        const maxX = Math.max(0, stage.clientWidth - el.offsetWidth);
+        const maxY = Math.max(0, stage.clientHeight - el.offsetHeight);
+        x = Math.floor(Math.random() * (maxX + 1));
+        y = Math.floor(Math.random() * (maxY + 1));
+      } else {
+        x = stmt.x; y = stmt.y;
+      }
+      el.style.position = "absolute";
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      el._x = x; el._y = y;
+      return;
+    }
     const cmd = commands[stmt.command];
     if (!cmd) {
       print("Unknown command: " + stmt.command);
@@ -395,6 +421,7 @@
       delete activeKeyIntervals[key];
     }
     for (const key of Object.keys(sprites)) delete sprites[key];
+    for (const key of Object.keys(buttons)) delete buttons[key];
     stage.innerHTML = "";
     for (const stmt of parse(source)) execute(stmt, print);
   }
