@@ -204,7 +204,7 @@
   let currentPrint = (line) => console.log(line);
 
   const helpExtras = {
-    "make sprite": 'creates a sprite, e.g. make sprite (circle\'blue) name = (bob) size = ("100\'100\'px")',
+    "make sprite": 'creates a sprite, e.g. make sprite (circle\'blue) name = (bob) size = ("100\'100\'px"). Shapes: circle, square, triangle, line',
     show: "shows a sprite, e.g. show (bob)",
     hide: "hides a sprite, e.g. hide (bob)",
     move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held. Or 'move (bob) to connected' to teleport to coords held by the connected variable (format: 100'200'px)",
@@ -425,8 +425,8 @@
         return;
       }
       const [shape, color] = parts;
-      if (shape !== "circle") {
-        print("make sprite: only 'circle' is supported, got " + shape);
+      if (!["circle", "square", "triangle", "line"].includes(shape)) {
+        print("make sprite: shape must be circle, square, triangle, or line; got " + shape);
         return;
       }
       const sizeMatch = /^(\d+)'(\d+)'px$/.exec(unquote(stmt.size));
@@ -440,7 +440,8 @@
       el.style.width = sizeMatch[1] + "px";
       el.style.height = sizeMatch[2] + "px";
       el.style.background = color;
-      el.style.borderRadius = "50%";
+      if (shape === "circle") el.style.borderRadius = "50%";
+      if (shape === "triangle") el.style.clipPath = "polygon(50% 0, 100% 100%, 0 100%)";
       el._x = 0; el._y = 0;
       el.style.left = "0px";
       el.style.top = "0px";
