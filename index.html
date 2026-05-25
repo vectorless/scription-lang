@@ -201,6 +201,8 @@
   const sprites = {};
   const buttons = {};
   const spriteVarLinks = {};
+  const touchWatchers = [];
+  let touchTickerStarted = false;
   let currentPrint = (line) => console.log(line);
 
   const helpExtras = {
@@ -208,7 +210,8 @@
     show: "shows a sprite, e.g. show (bob)",
     hide: "hides a sprite, e.g. hide (bob)",
     move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held. Or 'move (bob) to connected' to teleport to coords held by the connected variable (format: 100'200'px)",
-    teleport: "teleports a sprite or button: teleport (bob) to (100'200'px) or teleport (bob) to random",
+    teleport: "teleports a sprite or button: teleport (bob) to (100'200'px) or teleport (bob) to random. Shorthand: tp (bob) random",
+    "if touch": "runs an action when two sprites start overlapping, e.g. if touch (a) touch (b) tp (a) random",
     pulse: "flashes the screen a color, e.g. pulse red",
     "sprite ... connect var(...)": "connects a sprite to a variable, e.g. sprite (bob) connect var(hello_world)",
     "coordinates show": "shows coordinate labels along the top and left edges of the stage",
@@ -356,10 +359,16 @@
     if (moveToConnectedMatch) {
       return { kind: "move_to_connected", name: moveToConnectedMatch[1] };
     }
-    const teleportMatch = /^teleport\s+\(([^)]*)\)\s+to\s+(?:\((\d+)'(\d+)'px\)|(random))$/.exec(line);
+    const teleportMatch = /^(?:teleport|tp)\s+\(([^)]*)\)(?:\s+to)?\s+(?:\((\d+)'(\d+)'px\)|(random))$/.exec(line);
     if (teleportMatch) {
       if (teleportMatch[4]) return { kind: "teleport", name: teleportMatch[1], random: true };
       return { kind: "teleport", name: teleportMatch[1], x: Number(teleportMatch[2]), y: Number(teleportMatch[3]) };
+    }
+    const ifTouchMatch = /^if\s+touch\s+\(([^)]*)\)\s+touch\s+\(([^)]*)\)\s+(.+)$/.exec(line);
+    if (ifTouchMatch) {
+      const body = parseStatement(ifTouchMatch[3]);
+      if (!body) return null;
+      return { kind: "if_touch", a: ifTouchMatch[1], b: ifTouchMatch[2], body };
     }
     const keyPressedMatch = /^([a-zA-Z])\s+pressed\s*=?\s*(.+)$/.exec(line);
     if (keyPressedMatch) {
@@ -468,6 +477,13 @@
     }
     if (stmt.kind === "key_pressed") {
       keyHandlers[stmt.key] = stmt.body;
+      return;
+    }
+    if (stmt.kind === "if_touch") {
+      if (!sprites[stmt.a]) { print("if touch: sprite " + stmt.a + " does not exist"); return; }
+      if (!sprites[stmt.b]) { print("if touch: sprite " + stmt.b + " does not exist"); return; }
+      touchWatchers.push({ a: stmt.a, b: stmt.b, body: stmt.body, wasTouching: false });
+      startTouchTicker();
       return;
     }
     if (stmt.kind === "move_to_connected") {
@@ -584,10 +600,32 @@
     for (const key of Object.keys(sprites)) delete sprites[key];
     for (const key of Object.keys(buttons)) delete buttons[key];
     for (const key of Object.keys(spriteVarLinks)) delete spriteVarLinks[key];
+    touchWatchers.length = 0;
     stage.innerHTML = "";
     stage.appendChild(pulseOverlay);
     stage.appendChild(exitFullscreenBtn);
     for (const stmt of parse(source)) execute(stmt, print);
+  }
+
+  function rectsOverlap(a, b) {
+    const ar = a.getBoundingClientRect();
+    const br = b.getBoundingClientRect();
+    return ar.left < br.right && ar.right > br.left && ar.top < br.bottom && ar.bottom > br.top;
+  }
+
+  function startTouchTicker() {
+    if (touchTickerStarted) return;
+    touchTickerStarted = true;
+    setInterval(() => {
+      for (const w of touchWatchers) {
+        const ea = sprites[w.a];
+        const eb = sprites[w.b];
+        if (!ea || !eb) continue;
+        const touching = rectsOverlap(ea, eb);
+        if (touching && !w.wasTouching) execute(w.body, currentPrint);
+        w.wasTouching = touching;
+      }
+    }, 30);
   }
 
   document.addEventListener("keydown", (e) => {
