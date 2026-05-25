@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scription</title>
+<style>
+  :root {
+    --bg: #1e1e2e;
+    --panel: #282838;
+    --fg: #e6e6f0;
+    --muted: #8a8aa0;
+    --accent: #7aa2f7;
+    --accent-hover: #9eb8ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, system-ui, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid #00000040;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  header .hint {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  #runBtn {
+    margin-left: auto;
+    padding: 8px 18px;
+    background: var(--accent);
+    color: #0b1020;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #runBtn:hover { background: var(--accent-hover); }
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1px;
+    background: #00000040;
+    min-height: 0;
+  }
+  .pane {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    min-height: 0;
+  }
+  .pane-label {
+    padding: 8px 16px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    background: var(--panel);
+  }
+  #code, #output {
+    flex: 1;
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    border: none;
+    outline: none;
+    resize: none;
+    overflow: auto;
+    white-space: pre-wrap;
+  }
+  #stage {
+    flex: 1;
+    padding: 16px;
+    overflow: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    gap: 8px;
+    position: relative;
+  }
+  #stage .sprite { position: absolute; }
+  #stage button {
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid #ffffff20;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    padding: 0 12px;
+  }
+  #stage button:hover { background: #34344a; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Scription</h1>
+    <span class="hint">type <code>help</code> to see all commands</span>
+    <button id="runBtn">Run</button>
+  </header>
+  <main>
+    <section class="pane">
+      <div class="pane-label">Editor</div>
+      <textarea id="code" spellcheck="false">text("hello world")</textarea>
+    </section>
+    <section class="pane">
+      <div class="pane-label">Output</div>
+      <pre id="output"></pre>
+    </section>
+    <section class="pane">
+      <div class="pane-label">Stage</div>
+      <div id="stage"></div>
+    </section>
+  </main>
+
+<script>
+  const variables = {};
+  const pressedHandlers = {};
+  const keyHandlers = {};
+  const activeKeyIntervals = {};
+  const sprites = {};
+  let currentPrint = (line) => console.log(line);
+
+  const helpExtras = {
+    "make sprite": 'creates a sprite, e.g. make sprite (circle\'blue) name = (bob) size = ("100\'100\'px")',
+    show: "shows a sprite, e.g. show (bob)",
+    hide: "hides a sprite, e.g. hide (bob)",
+    move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held",
+    "<key> pressed": "runs a statement when a key is pressed, e.g. d pressed move (bob) 5px down",
+  };
+
+  const commands = {
+    help: {
+      description: "lists all available commands",
+      run: (_args, print) => {
+        for (const name of Object.keys(commands)) {
+          print(name + " - " + commands[name].description);
+        }
+        for (const name of Object.keys(helpExtras)) {
+          print(name + " - " + helpExtras[name]);
+        }
+      },
+    },
+    text: {
+      description: 'displays text on screen, e.g. text("hello world") or text(myvar)',
+      run: (args, print) => {
+        const arg = args[0] ?? "";
+        const quoted = /^"(.*)"$/.exec(arg);
+        if (quoted) { print(quoted[1]); return; }
+        if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(arg)) {
+          if (!(arg in variables)) { print("text: variable " + arg + " is not defined"); return; }
+          print(String(variables[arg]));
+          return;
+        }
+        print("text: expected a quoted string or a variable name, got " + arg);
+      },
+    },
+    var: {
+      description: "declares a variable, e.g. var(hello_world)",
+      run: (args, print) => {
+        const arg = args[0] ?? "";
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(arg)) {
+          print("var: invalid variable name " + arg);
+          return;
+        }
+        variables[arg] = undefined;
+      },
+    },
+    input: {
+      description: "prompts you to type data into a variable, e.g. input(hello_world)",
+      run: (args, print) => {
+        const arg = args[0] ?? "";
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(arg)) {
+          print("input: invalid variable name " + arg);
+          return;
+        }
+        if (!(arg in variables)) {
+          print("input: variable " + arg + " is not defined (use var(" + arg + ") first)");
+          return;
+        }
+        const entered = window.prompt(arg + " =");
+        variables[arg] = entered === null ? "" : entered;
+      },
+    },
+    button: {
+      description: 'creates a button: button(label)("W\'H\'px")(code)',
+      run: (args, print) => {
+        if (args.length !== 3) {
+          print('button: expected 3 groups, got ' + args.length);
+          return;
+        }
+        const [label, sizeRaw, code] = args;
+        const sizeMatch = /^(\d+)'(\d+)'px$/.exec(unquote(sizeRaw));
+        if (!sizeMatch) {
+          print('button: size must look like "50\'50\'px", got ' + sizeRaw);
+          return;
+        }
+        const btn = document.createElement("button");
+        btn.textContent = unquote(label);
+        btn.style.width = sizeMatch[1] + "px";
+        btn.style.height = sizeMatch[2] + "px";
+        btn.dataset.code = code;
+        btn.onclick = () => {
+          const handler = pressedHandlers[code];
+          if (handler) execute(handler, currentPrint);
+        };
+        stage.appendChild(btn);
+      },
+    },
+  };
+
+  function unquote(raw) {
+    const quoted = /^"(.*)"$/.exec(raw);
+    return quoted ? quoted[1] : raw;
+  }
+
+  function parseGroups(rest) {
+    const groups = [];
+    const re = /\(([^)]*)\)/g;
+    let m;
+    let consumed = 0;
+    while ((m = re.exec(rest)) !== null) {
+      if (m.index !== consumed) return null;
+      groups.push(m[1]);
+      consumed = re.lastIndex;
+    }
+    if (consumed !== rest.length) return null;
+    return groups;
+  }
+
+  function parseStatement(line) {
+    const pressedMatch = /^pressed\s*\(([^)]*)\)\s*=?\s*(.+)$/.exec(line);
+    if (pressedMatch) {
+      const body = parseStatement(pressedMatch[2]);
+      if (!body) return null;
+      return { kind: "pressed", code: pressedMatch[1], body };
+    }
+    const ifMatch = /^if\s+\(([A-Za-z_][A-Za-z0-9_]*)\)\s*([=!])\s*(\S+)\s+(.+)$/.exec(line);
+    if (ifMatch) {
+      const body = parseStatement(ifMatch[4]);
+      if (!body) return null;
+      return { kind: "if", name: ifMatch[1], op: ifMatch[2], value: ifMatch[3], body };
+    }
+    const makeSpriteMatch = /^make\s+sprite\s+\(([^)]*)\)\s+name\s*=\s*\(([^)]*)\)\s+size\s*=\s*\(([^)]*)\)$/.exec(line);
+    if (makeSpriteMatch) {
+      return { kind: "make_sprite", shapeColor: makeSpriteMatch[1], name: makeSpriteMatch[2], size: makeSpriteMatch[3] };
+    }
+    const showHideMatch = /^(show|hide)\s+\(([^)]*)\)$/.exec(line);
+    if (showHideMatch) {
+      return { kind: showHideMatch[1], name: showHideMatch[2] };
+    }
+    const moveMatch = /^move\s+\(([^)]*)\)\s+(\d+)px\s+(up|down|left|right)(\s+repeat until hold\s*=\s*false)?$/.exec(line);
+    if (moveMatch) {
+      return { kind: "move", name: moveMatch[1], px: Number(moveMatch[2]), dir: moveMatch[3], repeatUntilHold: !!moveMatch[4] };
+    }
+    const keyPressedMatch = /^([a-zA-Z])\s+pressed\s+(.+)$/.exec(line);
+    if (keyPressedMatch) {
+      const body = parseStatement(keyPressedMatch[2]);
+      if (!body) return null;
+      return { kind: "key_pressed", key: keyPressedMatch[1].toLowerCase(), body };
+    }
+    const assignMatch = /^\(([A-Za-z_][A-Za-z0-9_]*)\)\s*=\s*(.*)$/.exec(line);
+    if (assignMatch) {
+      return { kind: "assign", name: assignMatch[1], value: assignMatch[2].trim() };
+    }
+    const callHead = /^([A-Za-z_][A-Za-z0-9_]*)\s*(\(.*)$/.exec(line);
+    if (callHead) {
+      const groups = parseGroups(callHead[2]);
+      if (groups) return { kind: "call", command: callHead[1], args: groups };
+    }
+    return { kind: "call", command: line, args: [] };
+  }
+
+  function parse(source) {
+    const statements = [];
+    for (const raw of source.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      const stmt = parseStatement(line);
+      if (stmt) statements.push(stmt);
+    }
+    return statements;
+  }
+
+  function execute(stmt, print) {
+    if (stmt.kind === "assign") {
+      if (!(stmt.name in variables)) {
+        print("Assignment to undeclared variable: " + stmt.name + " (use var(" + stmt.name + ") first)");
+        return;
+      }
+      variables[stmt.name] = unquote(stmt.value);
+      return;
+    }
+    if (stmt.kind === "if") {
+      if (!(stmt.name in variables)) {
+        print("if: variable " + stmt.name + " is not defined");
+        return;
+      }
+      const left = String(variables[stmt.name]);
+      const right = unquote(stmt.value);
+      const matches = stmt.op === "=" ? left === right : left !== right;
+      if (matches) execute(stmt.body, print);
+      return;
+    }
+    if (stmt.kind === "pressed") {
+      pressedHandlers[stmt.code] = stmt.body;
+      return;
+    }
+    if (stmt.kind === "make_sprite") {
+      const parts = stmt.shapeColor.split("'");
+      if (parts.length !== 2) {
+        print("make sprite: expected shape'color, got " + stmt.shapeColor);
+        return;
+      }
+      const [shape, color] = parts;
+      if (shape !== "circle") {
+        print("make sprite: only 'circle' is supported, got " + shape);
+        return;
+      }
+      const sizeMatch = /^(\d+)'(\d+)'px$/.exec(unquote(stmt.size));
+      if (!sizeMatch) {
+        print('make sprite: size must look like "100\'100\'px", got ' + stmt.size);
+        return;
+      }
+      if (sprites[stmt.name]) sprites[stmt.name].remove();
+      const el = document.createElement("div");
+      el.className = "sprite";
+      el.style.width = sizeMatch[1] + "px";
+      el.style.height = sizeMatch[2] + "px";
+      el.style.background = color;
+      el.style.borderRadius = "50%";
+      el._x = 0; el._y = 0;
+      el.style.left = "0px";
+      el.style.top = "0px";
+      sprites[stmt.name] = el;
+      stage.appendChild(el);
+      return;
+    }
+    if (stmt.kind === "show" || stmt.kind === "hide") {
+      const el = sprites[stmt.name];
+      if (!el) { print(stmt.kind + ": sprite " + stmt.name + " does not exist"); return; }
+      el.style.display = stmt.kind === "show" ? "block" : "none";
+      return;
+    }
+    if (stmt.kind === "move") {
+      const el = sprites[stmt.name];
+      if (!el) { print("move: sprite " + stmt.name + " does not exist"); return; }
+      if (stmt.dir === "up") el._y -= stmt.px;
+      if (stmt.dir === "down") el._y += stmt.px;
+      if (stmt.dir === "left") el._x -= stmt.px;
+      if (stmt.dir === "right") el._x += stmt.px;
+      el.style.left = el._x + "px";
+      el.style.top = el._y + "px";
+      return;
+    }
+    if (stmt.kind === "key_pressed") {
+      keyHandlers[stmt.key] = stmt.body;
+      return;
+    }
+    const cmd = commands[stmt.command];
+    if (!cmd) {
+      print("Unknown command: " + stmt.command);
+      return;
+    }
+    cmd.run(stmt.args, print);
+  }
+
+  function run(source, print) {
+    currentPrint = print;
+    for (const key of Object.keys(pressedHandlers)) delete pressedHandlers[key];
+    for (const key of Object.keys(keyHandlers)) delete keyHandlers[key];
+    for (const key of Object.keys(activeKeyIntervals)) {
+      clearInterval(activeKeyIntervals[key]);
+      delete activeKeyIntervals[key];
+    }
+    for (const key of Object.keys(sprites)) delete sprites[key];
+    stage.innerHTML = "";
+    for (const stmt of parse(source)) execute(stmt, print);
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (document.activeElement === code) return;
+    const key = e.key.toLowerCase();
+    const handler = keyHandlers[key];
+    if (!handler) return;
+    e.preventDefault();
+    if (activeKeyIntervals[key]) return;
+    execute(handler, currentPrint);
+    if (handler.kind === "move" && handler.repeatUntilHold) {
+      activeKeyIntervals[key] = setInterval(() => execute(handler, currentPrint), 50);
+    }
+  });
+
+  document.addEventListener("keyup", (e) => {
+    const key = e.key.toLowerCase();
+    if (activeKeyIntervals[key]) {
+      clearInterval(activeKeyIntervals[key]);
+      delete activeKeyIntervals[key];
+    }
+  });
+
+  const output = document.getElementById("output");
+  const code = document.getElementById("code");
+  const stage = document.getElementById("stage");
+  document.getElementById("runBtn").onclick = () => {
+    output.textContent = "";
+    run(code.value, (line) => { output.textContent += line + "\n"; });
+  };
+</script>
+</body>
+</html>
