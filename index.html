@@ -113,6 +113,23 @@
     cursor: pointer;
   }
   #stage:fullscreen #exitFullscreenBtn { display: inline-block; }
+  .coord-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9997;
+  }
+  .coord-label {
+    position: absolute;
+    font-size: 10px;
+    color: var(--muted);
+    font-family: ui-monospace, monospace;
+    padding: 1px 3px;
+    background: #00000060;
+    border-radius: 2px;
+  }
+  .coord-x { top: 2px; transform: translateX(-50%); }
+  .coord-y { left: 2px; transform: translateY(-50%); }
   #code, #output {
     flex: 1;
     margin: 0;
@@ -183,15 +200,18 @@
   const activeKeyIntervals = {};
   const sprites = {};
   const buttons = {};
+  const spriteVarLinks = {};
   let currentPrint = (line) => console.log(line);
 
   const helpExtras = {
     "make sprite": 'creates a sprite, e.g. make sprite (circle\'blue) name = (bob) size = ("100\'100\'px")',
     show: "shows a sprite, e.g. show (bob)",
     hide: "hides a sprite, e.g. hide (bob)",
-    move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held",
+    move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held. Or 'move (bob) to connected' to teleport to coords held by the connected variable (format: 100'200'px)",
     teleport: "teleports a sprite or button: teleport (bob) to (100'200'px) or teleport (bob) to random",
     pulse: "flashes the screen a color, e.g. pulse red",
+    "sprite ... connect var(...)": "connects a sprite to a variable, e.g. sprite (bob) connect var(hello_world)",
+    "coordinates show": "shows coordinate labels along the top and left edges of the stage",
     "<key> pressed": "runs a statement when a key is pressed, e.g. d pressed move (bob) 5px down",
   };
 
@@ -316,9 +336,20 @@
     if (showHideMatch) {
       return { kind: showHideMatch[1], name: showHideMatch[2] };
     }
+    const connectMatch = /^sprite\s+\(([^)]*)\)\s+connect\s+var\(([A-Za-z_][A-Za-z0-9_]*)\)$/.exec(line);
+    if (connectMatch) {
+      return { kind: "connect", sprite: connectMatch[1], variable: connectMatch[2] };
+    }
+    if (/^coo?ordinates\s+show$/.test(line)) {
+      return { kind: "coordinates_show" };
+    }
     const moveMatch = /^move\s+\(([^)]*)\)\s+(\d+)px\s+(up|down|left|right)(\s+repeat until hold\s*=\s*false)?$/.exec(line);
     if (moveMatch) {
       return { kind: "move", name: moveMatch[1], px: Number(moveMatch[2]), dir: moveMatch[3], repeatUntilHold: !!moveMatch[4] };
+    }
+    const moveToConnectedMatch = /^move\s+\(([^)]*)\)\s+to\s+connected$/.exec(line);
+    if (moveToConnectedMatch) {
+      return { kind: "move_to_connected", name: moveToConnectedMatch[1] };
     }
     const teleportMatch = /^teleport\s+\(([^)]*)\)\s+to\s+(?:\((\d+)'(\d+)'px\)|(random))$/.exec(line);
     if (teleportMatch) {
@@ -433,6 +464,52 @@
       keyHandlers[stmt.key] = stmt.body;
       return;
     }
+    if (stmt.kind === "move_to_connected") {
+      const el = sprites[stmt.name];
+      if (!el) { print("move: sprite " + stmt.name + " does not exist"); return; }
+      const varName = spriteVarLinks[stmt.name];
+      if (!varName) { print("move: sprite " + stmt.name + " is not connected to a variable"); return; }
+      const value = variables[varName];
+      const coordMatch = /^(\d+)'(\d+)'px$/.exec(String(value ?? ""));
+      if (!coordMatch) { print("move: variable " + varName + " is not coords (expected 100'200'px, got " + value + ")"); return; }
+      const x = Number(coordMatch[1]);
+      const y = Number(coordMatch[2]);
+      el._x = x; el._y = y;
+      el.style.left = x + "px";
+      el.style.top = y + "px";
+      return;
+    }
+    if (stmt.kind === "coordinates_show") {
+      const existing = stage.querySelector(".coord-overlay");
+      if (existing) existing.remove();
+      const overlay = document.createElement("div");
+      overlay.className = "coord-overlay";
+      const w = stage.clientWidth;
+      const h = stage.clientHeight;
+      const step = 50;
+      for (let x = 0; x <= w; x += step) {
+        const lbl = document.createElement("div");
+        lbl.className = "coord-label coord-x";
+        lbl.style.left = x + "px";
+        lbl.textContent = String(x);
+        overlay.appendChild(lbl);
+      }
+      for (let y = 0; y <= h; y += step) {
+        const lbl = document.createElement("div");
+        lbl.className = "coord-label coord-y";
+        lbl.style.top = y + "px";
+        lbl.textContent = String(y);
+        overlay.appendChild(lbl);
+      }
+      stage.appendChild(overlay);
+      return;
+    }
+    if (stmt.kind === "connect") {
+      if (!sprites[stmt.sprite]) { print("connect: sprite " + stmt.sprite + " does not exist"); return; }
+      if (!(stmt.variable in variables)) { print("connect: variable " + stmt.variable + " is not defined"); return; }
+      spriteVarLinks[stmt.sprite] = stmt.variable;
+      return;
+    }
     if (stmt.kind === "pulse") {
       if (pulseOverlay._anim) pulseOverlay._anim.cancel();
       pulseOverlay.style.background = stmt.color;
@@ -478,6 +555,7 @@
     }
     for (const key of Object.keys(sprites)) delete sprites[key];
     for (const key of Object.keys(buttons)) delete buttons[key];
+    for (const key of Object.keys(spriteVarLinks)) delete spriteVarLinks[key];
     stage.innerHTML = "";
     stage.appendChild(pulseOverlay);
     stage.appendChild(exitFullscreenBtn);
