@@ -219,6 +219,7 @@
   const followers = [];
   const interactions = [];
   const screenTextWatchers = [];
+  const timers = {};
   let touchTickerStarted = false;
   let currentPrint = (line) => console.log(line);
 
@@ -231,6 +232,9 @@
     "if touch": "runs an action when two sprites start overlapping, e.g. if touch (a) touch (b) tp (a) random",
     follow: "makes one sprite follow another, e.g. (a) follow (b) or (a) follow (b) 5px to set chase speed (px per tick, default 2, tick = 30ms)",
     "(var) + n / - n": "adds or subtracts from a variable, e.g. (score) + 1 or (lives) - 1",
+    "when clicked": "runs an action when a sprite is clicked, e.g. when (bob) clicked (score) + 1 or when (bob) clicked (score) - 1",
+    timer: "starts a timer with an ID, e.g. timer 10s timer ID = (4)",
+    "timer ends": 'runs a statement when a timer ends, e.g. Timer ID (4) ends text("lose")',
     interact: 'shows text above a sprite while a key is held and another sprite is touching it, e.g. interact(sign) e text("read me") or text(myvar)',
     pulse: "flashes the screen a color, e.g. pulse red",
     "sprite ... connect var(...)": "connects a sprite to a variable, e.g. sprite (bob) connect var(hello_world)",
@@ -394,6 +398,22 @@
     if (interactMatch) {
       return { kind: "interact", sprite: interactMatch[1], key: interactMatch[2].toLowerCase(), content: interactMatch[3] };
     }
+    const whenClickedMatch = /^when\s+\(([^)]*)\)\s+clicked\s+(.+)$/.exec(line);
+    if (whenClickedMatch) {
+      const body = parseStatement(whenClickedMatch[2]);
+      if (!body) return null;
+      return { kind: "when_clicked", sprite: whenClickedMatch[1], body };
+    }
+    const timerEndMatch = /^timer\s+ID\s*\(([^)]*)\)\s+ends\s+(.+)$/i.exec(line);
+    if (timerEndMatch) {
+      const body = parseStatement(timerEndMatch[2]);
+      if (!body) return null;
+      return { kind: "timer_end", id: timerEndMatch[1], body };
+    }
+    const timerMatch = /^timer\s+(\d+(?:\.\d+)?)s\s+timer\s+ID\s*=\s*\(([^)]*)\)$/i.exec(line);
+    if (timerMatch) {
+      return { kind: "timer", seconds: Number(timerMatch[1]), id: timerMatch[2] };
+    }
     const keyPressedMatch = /^([a-zA-Z])\s+pressed\s*=?\s*(.+)$/.exec(line);
     if (keyPressedMatch) {
       const body = parseStatement(keyPressedMatch[2]);
@@ -539,6 +559,31 @@
       startTouchTicker();
       return;
     }
+    if (stmt.kind === "timer") {
+      if (timers[stmt.id]) clearTimeout(timers[stmt.id].handle);
+      const entry = { seconds: stmt.seconds, finished: false, handle: null, onFinish: null };
+      entry.handle = setTimeout(() => {
+        entry.finished = true;
+        print("Timer " + stmt.id + " finished");
+        if (entry.onFinish) execute(entry.onFinish, currentPrint);
+      }, stmt.seconds * 1000);
+      timers[stmt.id] = entry;
+      return;
+    }
+    if (stmt.kind === "timer_end") {
+      const entry = timers[stmt.id];
+      if (!entry) { print("timer end: timer " + stmt.id + " has not been started"); return; }
+      if (entry.finished) execute(stmt.body, print);
+      else entry.onFinish = stmt.body;
+      return;
+    }
+    if (stmt.kind === "when_clicked") {
+      const el = sprites[stmt.sprite];
+      if (!el) { print("when clicked: sprite " + stmt.sprite + " does not exist"); return; }
+      el.style.cursor = "pointer";
+      el.addEventListener("click", () => execute(stmt.body, currentPrint));
+      return;
+    }
     if (stmt.kind === "interact") {
       if (!sprites[stmt.sprite]) { print("interact: sprite " + stmt.sprite + " does not exist"); return; }
       const label = document.createElement("div");
@@ -672,6 +717,10 @@
     followers.length = 0;
     interactions.length = 0;
     screenTextWatchers.length = 0;
+    for (const id of Object.keys(timers)) {
+      clearTimeout(timers[id].handle);
+      delete timers[id];
+    }
     stage.innerHTML = "";
     stage.appendChild(pulseOverlay);
     stage.appendChild(exitFullscreenBtn);
