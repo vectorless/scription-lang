@@ -130,6 +130,20 @@
   }
   .coord-x { top: 2px; transform: translateX(-50%); }
   .coord-y { left: 2px; transform: translateY(-50%); }
+  .interact-label {
+    position: absolute;
+    display: none;
+    background: var(--panel);
+    color: var(--fg);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    z-index: 9996;
+    white-space: nowrap;
+    border: 1px solid #ffffff40;
+    pointer-events: none;
+    transform: translateX(-50%);
+  }
   #code, #output {
     flex: 1;
     margin: 0;
@@ -202,6 +216,8 @@
   const buttons = {};
   const spriteVarLinks = {};
   const touchWatchers = [];
+  const followers = [];
+  const interactions = [];
   let touchTickerStarted = false;
   let currentPrint = (line) => console.log(line);
 
@@ -212,6 +228,8 @@
     move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held. Or 'move (bob) to connected' to teleport to coords held by the connected variable (format: 100'200'px)",
     teleport: "teleports a sprite or button: teleport (bob) to (100'200'px) or teleport (bob) to random. Shorthand: tp (bob) random",
     "if touch": "runs an action when two sprites start overlapping, e.g. if touch (a) touch (b) tp (a) random",
+    follow: "makes one sprite follow another, e.g. (a) follow (b) or (a) follow (b) 5px to set chase speed (px per tick, default 2, tick = 30ms)",
+    interact: 'shows text above a sprite while a key is held and another sprite is touching it, e.g. interact(sign) e text("read me") or text(myvar)',
     pulse: "flashes the screen a color, e.g. pulse red",
     "sprite ... connect var(...)": "connects a sprite to a variable, e.g. sprite (bob) connect var(hello_world)",
     "coordinates show": "shows coordinate labels along the top and left edges of the stage",
@@ -370,6 +388,10 @@
       if (!body) return null;
       return { kind: "if_touch", a: ifTouchMatch[1], b: ifTouchMatch[2], body };
     }
+    const interactMatch = /^interact\s*\(([^)]*)\)\s+([a-zA-Z])\s+text\s*\(([^)]*)\)$/.exec(line);
+    if (interactMatch) {
+      return { kind: "interact", sprite: interactMatch[1], key: interactMatch[2].toLowerCase(), content: interactMatch[3] };
+    }
     const keyPressedMatch = /^([a-zA-Z])\s+pressed\s*=?\s*(.+)$/.exec(line);
     if (keyPressedMatch) {
       const body = parseStatement(keyPressedMatch[2]);
@@ -379,6 +401,10 @@
     const pulseMatch = /^pulse\s+(\S+)$/.exec(line);
     if (pulseMatch) {
       return { kind: "pulse", color: pulseMatch[1] };
+    }
+    const followMatch = /^\(([^)]*)\)\s+follow\s+\(([^)]*)\)(?:\s+(\d+)px)?$/.exec(line);
+    if (followMatch) {
+      return { kind: "follow", follower: followMatch[1], target: followMatch[2], speed: followMatch[3] ? Number(followMatch[3]) : 2 };
     }
     const assignMatch = /^\(([A-Za-z_][A-Za-z0-9_]*)\)\s*=\s*(.*)$/.exec(line);
     if (assignMatch) {
@@ -483,6 +509,22 @@
       if (!sprites[stmt.a]) { print("if touch: sprite " + stmt.a + " does not exist"); return; }
       if (!sprites[stmt.b]) { print("if touch: sprite " + stmt.b + " does not exist"); return; }
       touchWatchers.push({ a: stmt.a, b: stmt.b, body: stmt.body, wasTouching: false });
+      startTouchTicker();
+      return;
+    }
+    if (stmt.kind === "follow") {
+      if (!sprites[stmt.follower]) { print("follow: sprite " + stmt.follower + " does not exist"); return; }
+      if (!sprites[stmt.target]) { print("follow: sprite " + stmt.target + " does not exist"); return; }
+      followers.push({ follower: stmt.follower, target: stmt.target, speed: stmt.speed });
+      startTouchTicker();
+      return;
+    }
+    if (stmt.kind === "interact") {
+      if (!sprites[stmt.sprite]) { print("interact: sprite " + stmt.sprite + " does not exist"); return; }
+      const label = document.createElement("div");
+      label.className = "interact-label";
+      stage.appendChild(label);
+      interactions.push({ sprite: stmt.sprite, key: stmt.key, content: stmt.content, label });
       startTouchTicker();
       return;
     }
@@ -601,6 +643,8 @@
     for (const key of Object.keys(buttons)) delete buttons[key];
     for (const key of Object.keys(spriteVarLinks)) delete spriteVarLinks[key];
     touchWatchers.length = 0;
+    followers.length = 0;
+    interactions.length = 0;
     stage.innerHTML = "";
     stage.appendChild(pulseOverlay);
     stage.appendChild(exitFullscreenBtn);
@@ -617,6 +661,20 @@
     if (touchTickerStarted) return;
     touchTickerStarted = true;
     setInterval(() => {
+      for (const f of followers) {
+        const fa = sprites[f.follower];
+        const tb = sprites[f.target];
+        if (!fa || !tb) continue;
+        const dx = (tb._x || 0) - (fa._x || 0);
+        const dy = (tb._y || 0) - (fa._y || 0);
+        const dist = Math.hypot(dx, dy);
+        if (dist < 1) continue;
+        const step = Math.min(f.speed, dist);
+        fa._x += (dx / dist) * step;
+        fa._y += (dy / dist) * step;
+        fa.style.left = fa._x + "px";
+        fa.style.top = fa._y + "px";
+      }
       for (const w of touchWatchers) {
         const ea = sprites[w.a];
         const eb = sprites[w.b];
@@ -625,12 +683,39 @@
         if (touching && !w.wasTouching) execute(w.body, currentPrint);
         w.wasTouching = touching;
       }
+      for (const it of interactions) {
+        const target = sprites[it.sprite];
+        if (!target) continue;
+        it.label.style.left = (target._x + target.offsetWidth / 2) + "px";
+        it.label.style.top = (target._y - 26) + "px";
+      }
     }, 30);
+  }
+
+  function resolveTextContent(raw) {
+    const quoted = /^"(.*)"$/.exec(raw);
+    if (quoted) return quoted[1];
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw) && raw in variables) return String(variables[raw] ?? "");
+    return raw;
   }
 
   document.addEventListener("keydown", (e) => {
     if (document.activeElement === code) return;
     const key = e.key.toLowerCase();
+    for (const it of interactions) {
+      if (it.key !== key) continue;
+      const target = sprites[it.sprite];
+      if (!target) continue;
+      let overlapping = false;
+      for (const name of Object.keys(sprites)) {
+        if (name === it.sprite) continue;
+        if (rectsOverlap(target, sprites[name])) { overlapping = true; break; }
+      }
+      if (overlapping) {
+        it.label.textContent = resolveTextContent(it.content);
+        it.label.style.display = "block";
+      }
+    }
     const handler = keyHandlers[key];
     if (!handler) return;
     e.preventDefault();
@@ -646,6 +731,9 @@
     if (activeKeyIntervals[key]) {
       clearInterval(activeKeyIntervals[key]);
       delete activeKeyIntervals[key];
+    }
+    for (const it of interactions) {
+      if (it.key === key) it.label.style.display = "none";
     }
   });
 
