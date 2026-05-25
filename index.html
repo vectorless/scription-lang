@@ -224,7 +224,7 @@
   let currentPrint = (line) => console.log(line);
 
   const helpExtras = {
-    "make sprite": 'creates a sprite, e.g. make sprite (circle\'blue) name = (bob) size = ("100\'100\'px"). Shapes: circle, square, triangle, line',
+    "make sprite": 'creates a sprite, e.g. make sprite (circle\'blue) name = (bob) size = ("100\'100\'px"). Shapes: circle, square, triangle, line, image. For image, add src = ("https://...png") or a relative path',
     show: "shows a sprite, e.g. show (bob)",
     hide: "hides a sprite, e.g. hide (bob)",
     move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held. Or 'move (bob) to connected' to teleport to coords held by the connected variable (format: 100'200'px)",
@@ -356,9 +356,9 @@
       if (!body) return null;
       return { kind: "if", name: ifMatch[1], op: ifMatch[2], value: ifMatch[3], body };
     }
-    const makeSpriteMatch = /^make\s+sprite\s+\(([^)]*)\)\s+name\s*=\s*\(([^)]*)\)\s+size\s*=\s*\(([^)]*)\)$/.exec(line);
+    const makeSpriteMatch = /^make\s+sprite\s+\(([^)]*)\)\s+name\s*=\s*\(([^)]*)\)\s+size\s*=\s*\(([^)]*?)\)(?:\s+src\s*=\s*\(([^)]*)\))?$/.exec(line);
     if (makeSpriteMatch) {
-      return { kind: "make_sprite", shapeColor: makeSpriteMatch[1], name: makeSpriteMatch[2], size: makeSpriteMatch[3] };
+      return { kind: "make_sprite", shapeColor: makeSpriteMatch[1], name: makeSpriteMatch[2], size: makeSpriteMatch[3], src: makeSpriteMatch[4] ?? null };
     }
     const showHideMatch = /^(show|hide)\s+\(([^)]*)\)$/.exec(line);
     if (showHideMatch) {
@@ -495,13 +495,18 @@
     }
     if (stmt.kind === "make_sprite") {
       const parts = stmt.shapeColor.split("'");
-      if (parts.length !== 2) {
+      const shape = parts[0];
+      const color = parts[1] ?? "";
+      if (!["circle", "square", "triangle", "line", "image"].includes(shape)) {
+        print("make sprite: shape must be circle, square, triangle, line, or image; got " + shape);
+        return;
+      }
+      if (shape !== "image" && !color) {
         print("make sprite: expected shape'color, got " + stmt.shapeColor);
         return;
       }
-      const [shape, color] = parts;
-      if (!["circle", "square", "triangle", "line"].includes(shape)) {
-        print("make sprite: shape must be circle, square, triangle, or line; got " + shape);
+      if (shape === "image" && !stmt.src) {
+        print('make sprite: image shape requires src = ("url")');
         return;
       }
       const sizeMatch = /^(\d+)'(\d+)'px$/.exec(unquote(stmt.size));
@@ -514,7 +519,15 @@
       el.className = "sprite";
       el.style.width = sizeMatch[1] + "px";
       el.style.height = sizeMatch[2] + "px";
-      el.style.background = color;
+      if (shape === "image") {
+        const url = unquote(stmt.src).replace(/'/g, "\\'");
+        el.style.backgroundImage = "url('" + url + "')";
+        el.style.backgroundSize = "contain";
+        el.style.backgroundRepeat = "no-repeat";
+        el.style.backgroundPosition = "center";
+      } else {
+        el.style.background = color;
+      }
       if (shape === "circle") el.style.borderRadius = "50%";
       if (shape === "triangle") el.style.clipPath = "polygon(50% 0, 100% 100%, 0 100%)";
       el._x = 0; el._y = 0;
