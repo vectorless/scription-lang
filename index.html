@@ -212,6 +212,7 @@
     pulse: "flashes the screen a color, e.g. pulse red",
     "sprite ... connect var(...)": "connects a sprite to a variable, e.g. sprite (bob) connect var(hello_world)",
     "coordinates show": "shows coordinate labels along the top and left edges of the stage",
+    "screen text": 'displays text on the stage at coords, e.g. screen text("200\'450\'px")("hello") or screen text("0\'0\'px")(myvar)',
     "<key> pressed": "runs a statement when a key is pressed, e.g. d pressed move (bob) 5px down",
   };
 
@@ -342,6 +343,10 @@
     }
     if (/^coo?ordinates\s+show$/.test(line)) {
       return { kind: "coordinates_show" };
+    }
+    const screenTextMatch = /^screen\s+text\s*\(("[^"]*")\)\s*\(([^)]*)\)$/.exec(line);
+    if (screenTextMatch) {
+      return { kind: "screen_text", pos: screenTextMatch[1], content: screenTextMatch[2] };
     }
     const moveMatch = /^move\s+\(([^)]*)\)\s+(\d+)px\s+(up|down|left|right)(\s+repeat until hold\s*=\s*false)?$/.exec(line);
     if (moveMatch) {
@@ -477,6 +482,28 @@
       el._x = x; el._y = y;
       el.style.left = x + "px";
       el.style.top = y + "px";
+      return;
+    }
+    if (stmt.kind === "screen_text") {
+      const posMatch = /^(\d+)'(\d+)'px$/.exec(unquote(stmt.pos));
+      if (!posMatch) { print('screen text: position must look like "200\'450\'px", got ' + stmt.pos); return; }
+      let textValue;
+      const quoted = /^"(.*)"$/.exec(stmt.content);
+      if (quoted) {
+        textValue = quoted[1];
+      } else if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(stmt.content)) {
+        if (!(stmt.content in variables)) { print("screen text: variable " + stmt.content + " is not defined"); return; }
+        textValue = String(variables[stmt.content] ?? "");
+      } else {
+        textValue = stmt.content;
+      }
+      const el = document.createElement("div");
+      el.className = "screen-text";
+      el.style.position = "absolute";
+      el.style.left = posMatch[1] + "px";
+      el.style.top = posMatch[2] + "px";
+      el.textContent = textValue;
+      stage.appendChild(el);
       return;
     }
     if (stmt.kind === "coordinates_show") {
