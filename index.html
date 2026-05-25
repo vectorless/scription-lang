@@ -73,7 +73,46 @@
     letter-spacing: 1px;
     color: var(--muted);
     background: var(--panel);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
   }
+  .pane-label button {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid #ffffff20;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 2px 8px;
+  }
+  .pane-label button:hover { color: var(--fg); border-color: #ffffff40; }
+  #stage:fullscreen { background: var(--bg); padding: 24px; }
+  #pulseOverlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9998;
+    opacity: 0;
+  }
+  #exitFullscreenBtn {
+    display: none;
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 10000;
+    background: var(--panel);
+    color: var(--fg);
+    border: 1px solid #ffffff40;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font: inherit;
+    cursor: pointer;
+  }
+  #stage:fullscreen #exitFullscreenBtn { display: inline-block; }
   #code, #output {
     flex: 1;
     margin: 0;
@@ -129,7 +168,10 @@
       <pre id="output"></pre>
     </section>
     <section class="pane">
-      <div class="pane-label">Stage</div>
+      <div class="pane-label">
+        <span>Stage</span>
+        <button id="fullscreenBtn">Fullscreen</button>
+      </div>
       <div id="stage"></div>
     </section>
   </main>
@@ -149,6 +191,7 @@
     hide: "hides a sprite, e.g. hide (bob)",
     move: "moves a sprite, e.g. move (bob) 5px down. Add 'repeat until hold = false' to keep moving while a key is held",
     teleport: "teleports a sprite or button: teleport (bob) to (100'200'px) or teleport (bob) to random",
+    pulse: "flashes the screen a color, e.g. pulse red",
     "<key> pressed": "runs a statement when a key is pressed, e.g. d pressed move (bob) 5px down",
   };
 
@@ -282,11 +325,15 @@
       if (teleportMatch[4]) return { kind: "teleport", name: teleportMatch[1], random: true };
       return { kind: "teleport", name: teleportMatch[1], x: Number(teleportMatch[2]), y: Number(teleportMatch[3]) };
     }
-    const keyPressedMatch = /^([a-zA-Z])\s+pressed\s+(.+)$/.exec(line);
+    const keyPressedMatch = /^([a-zA-Z])\s+pressed\s*=?\s*(.+)$/.exec(line);
     if (keyPressedMatch) {
       const body = parseStatement(keyPressedMatch[2]);
       if (!body) return null;
       return { kind: "key_pressed", key: keyPressedMatch[1].toLowerCase(), body };
+    }
+    const pulseMatch = /^pulse\s+(\S+)$/.exec(line);
+    if (pulseMatch) {
+      return { kind: "pulse", color: pulseMatch[1] };
     }
     const assignMatch = /^\(([A-Za-z_][A-Za-z0-9_]*)\)\s*=\s*(.*)$/.exec(line);
     if (assignMatch) {
@@ -386,6 +433,15 @@
       keyHandlers[stmt.key] = stmt.body;
       return;
     }
+    if (stmt.kind === "pulse") {
+      if (pulseOverlay._anim) pulseOverlay._anim.cancel();
+      pulseOverlay.style.background = stmt.color;
+      pulseOverlay._anim = pulseOverlay.animate(
+        [{ opacity: 0.7 }, { opacity: 0 }],
+        { duration: 150, easing: "ease-out" }
+      );
+      return;
+    }
     if (stmt.kind === "teleport") {
       const el = sprites[stmt.name] ?? buttons[stmt.name];
       if (!el) { print("teleport: no sprite or button named " + stmt.name); return; }
@@ -423,6 +479,8 @@
     for (const key of Object.keys(sprites)) delete sprites[key];
     for (const key of Object.keys(buttons)) delete buttons[key];
     stage.innerHTML = "";
+    stage.appendChild(pulseOverlay);
+    stage.appendChild(exitFullscreenBtn);
     for (const stmt of parse(source)) execute(stmt, print);
   }
 
@@ -450,9 +508,25 @@
   const output = document.getElementById("output");
   const code = document.getElementById("code");
   const stage = document.getElementById("stage");
+
+  const pulseOverlay = document.createElement("div");
+  pulseOverlay.id = "pulseOverlay";
+
+  const exitFullscreenBtn = document.createElement("button");
+  exitFullscreenBtn.id = "exitFullscreenBtn";
+  exitFullscreenBtn.textContent = "← Back";
+  exitFullscreenBtn.onclick = () => document.exitFullscreen();
+
+  stage.appendChild(pulseOverlay);
+  stage.appendChild(exitFullscreenBtn);
+
   document.getElementById("runBtn").onclick = () => {
     output.textContent = "";
     run(code.value, (line) => { output.textContent += line + "\n"; });
+  };
+  document.getElementById("fullscreenBtn").onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else stage.requestFullscreen();
   };
 </script>
 </body>
