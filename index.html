@@ -229,6 +229,7 @@
     teleport: "teleports a sprite or button: teleport (bob) to (100'200'px) or teleport (bob) to random. Shorthand: tp (bob) random",
     "if touch": "runs an action when two sprites start overlapping, e.g. if touch (a) touch (b) tp (a) random",
     follow: "makes one sprite follow another, e.g. (a) follow (b) or (a) follow (b) 5px to set chase speed (px per tick, default 2, tick = 30ms)",
+    "(var) + n / - n": "adds or subtracts from a variable, e.g. (score) + 1 or (lives) - 1",
     interact: 'shows text above a sprite while a key is held and another sprite is touching it, e.g. interact(sign) e text("read me") or text(myvar)',
     pulse: "flashes the screen a color, e.g. pulse red",
     "sprite ... connect var(...)": "connects a sprite to a variable, e.g. sprite (bob) connect var(hello_world)",
@@ -406,6 +407,10 @@
     if (followMatch) {
       return { kind: "follow", follower: followMatch[1], target: followMatch[2], speed: followMatch[3] ? Number(followMatch[3]) : 2 };
     }
+    const arithMatch = /^\(([A-Za-z_][A-Za-z0-9_]*)\)\s*([+\-])\s*(\d+(?:\.\d+)?)$/.exec(line);
+    if (arithMatch) {
+      return { kind: "arith", name: arithMatch[1], op: arithMatch[2], amount: Number(arithMatch[3]) };
+    }
     const assignMatch = /^\(([A-Za-z_][A-Za-z0-9_]*)\)\s*=\s*(.*)$/.exec(line);
     if (assignMatch) {
       return { kind: "assign", name: assignMatch[1], value: assignMatch[2].trim() };
@@ -430,6 +435,20 @@
   }
 
   function execute(stmt, print) {
+    if (stmt.kind === "arith") {
+      if (!(stmt.name in variables)) {
+        print("arithmetic: variable " + stmt.name + " is not defined");
+        return;
+      }
+      const current = Number(variables[stmt.name]);
+      if (Number.isNaN(current)) {
+        print("arithmetic: variable " + stmt.name + " is not a number (got " + variables[stmt.name] + ")");
+        return;
+      }
+      const result = stmt.op === "+" ? current + stmt.amount : current - stmt.amount;
+      variables[stmt.name] = String(result);
+      return;
+    }
     if (stmt.kind === "assign") {
       if (!(stmt.name in variables)) {
         print("Assignment to undeclared variable: " + stmt.name + " (use var(" + stmt.name + ") first)");
